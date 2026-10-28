@@ -1,0 +1,7 @@
+{"host": "win01", "collector": "windows_winrm", "status": "ok", "connected_ip": "192.0.2.13", "collected_at": "2026-10-27T01:01:00+00:00",
+ "data": {"hostname": "WIN01", "dns_domain": "corp.example.com", "manufacturer": "VMware, Inc.", "model": "VMware Virtual Platform",
+  "serial": "VMware-42 1a 2b 3c", "asset_tag": "No Asset Tag", "os_caption": "Microsoft Windows Server 2022 Standard", "os_version": "10.0.20348",
+  "adapters": [{"name": "Ethernet0", "description": "vmxnet3 Ethernet Adapter", "mac": "00-50-56-AA-BB-01", "status": "Up", "virtual": false, "ifindex": 6}],
+  "ip_addresses": [{"ifalias": "Ethernet0", "ifindex": 6, "address": "192.0.2.13", "prefix": 24, "family": "IPv4"},
+                   {"ifalias": "Ethernet0", "ifindex": 6, "address": "fe80::5", "prefix": 64, "family": "IPv6"}],
+  "default_routes": [{"ifindex": 6, "nexthop": "192.0.2.1"}]}}

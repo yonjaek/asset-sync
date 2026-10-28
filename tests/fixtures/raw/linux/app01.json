@@ -1,0 +1,8 @@
+{"host": "app01", "collector": "linux_ssh", "status": "ok", "connected_ip": "192.0.2.12", "privileged": false,
+ "collected_at": "2026-10-27T01:00:05+00:00",
+ "facts": {"ansible_hostname": "app01", "ansible_system_vendor": "QEMU", "ansible_product_name": "Standard PC (Q35 + ICH9, 2009)",
+  "ansible_product_serial": "NA", "ansible_distribution": "Ubuntu", "ansible_distribution_version": "22.04",
+  "ansible_virtualization_role": "guest", "ansible_virtualization_type": "kvm",
+  "ansible_interfaces": ["lo", "ens3"],
+  "ansible_ens3": {"device": "ens3", "type": "ether", "module": "virtio_net", "active": true, "macaddress": "52:54:00:12:34:56",
+                   "ipv4": {"address": "192.0.2.12", "netmask": "255.255.255.0"}}}}

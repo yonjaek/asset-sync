@@ -1,0 +1,7 @@
+hosts:
+  web01: {os_family: linux, site: dc1, role: server}
+  app01: {os_family: linux, role: server, cluster: kvm-01}
+  win01: {os_family: windows, role: server, cluster: vmw-01}
+  db01:  {os_family: linux, site: dc1, role: server}
+  db02:  {os_family: linux, site: dc1}
+  tabbed01: {skip: true, reason: "no access agreement"}

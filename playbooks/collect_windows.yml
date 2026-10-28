@@ -1,0 +1,43 @@
+---
+# Read-only CIM queries over WinRM. Nothing is installed or changed on the target.
+- name: Collect Windows hardware/OS/network inventory (read-only)
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: false
+  any_errors_fatal: false
+  vars:
+    raw_dir: "{{ playbook_dir }}/../data/raw/windows"
+  tasks:
+    - name: Run inventory query
+      ansible.windows.win_powershell:
+        script: "{{ lookup('ansible.builtin.file', 'files/collect_inventory.ps1') }}"
+      register: win_inv
+      changed_when: false
+      ignore_unreachable: true
+      ignore_errors: true
+      no_log: true
+
+    - name: Record skip reason
+      when: win_inv.unreachable | default(false) or win_inv.failed | default(false)
+      ansible.builtin.copy:
+        dest: "{{ raw_dir }}/{{ inventory_hostname }}.status.json"
+        mode: "0600"
+        content: "{{ {'host': inventory_hostname, 'collector': 'windows_winrm', 'status': 'skipped',
+                      'reason': ('unreachable' if win_inv.unreachable | default(false) else 'failed'),
+                      'detail': (win_inv.msg | default('') | regex_replace('(?i)(password|token)\\S*', '***'))[:300],
+                      'collected_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%S+00:00')} | to_nice_json }}"
+      delegate_to: localhost
+
+    - name: Stop processing skipped host
+      when: win_inv.unreachable | default(false) or win_inv.failed | default(false)
+      ansible.builtin.meta: end_host
+
+    - name: Write raw payload
+      ansible.builtin.copy:
+        dest: "{{ raw_dir }}/{{ inventory_hostname }}.json"
+        mode: "0600"
+        content: "{{ {'host': inventory_hostname, 'collector': 'windows_winrm', 'status': 'ok',
+                      'connected_ip': ansible_host | default(inventory_hostname),
+                      'collected_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%S+00:00'),
+                      'data': win_inv.output[0] | default({})} | to_nice_json }}"
+      delegate_to: localhost
+      no_log: true

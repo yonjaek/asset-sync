@@ -1,0 +1,7 @@
+# ansible-vault create inventory/group_vars/all/vault.yml   (never commit the decrypted file)
+vault_linux_ssh_user: svc_inventory
+vault_linux_ssh_key_file: ~/.ssh/id_inventory   # key auth preferred
+vault_linux_become_password: ""                 # only if collect_become=true and sudo needs a password
+vault_windows_user: "DOMAIN\\svc_inventory"
+vault_windows_password: "CHANGE_ME"
+vault_netbox_write_token: "CHANGE_ME"

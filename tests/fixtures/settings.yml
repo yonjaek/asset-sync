@@ -1,0 +1,10 @@
+netbox: {min_version: "4.1"}
+defaults: {site: null, device_role: null, vm_role: null, cluster: null}
+subnets: [192.0.2.0/24]
+hosts_parse:
+  domain_suffixes: [corp.example.com]
+  bmc_name_patterns: ['-(bmc|ipmi|idrac|ilo)$']
+interfaces:
+  exclude_regex: '^(lo|veth.*|docker\d*)$'
+manufacturer_aliases: {"Dell Inc.": Dell}
+sync: {max_hosts: 5, auto_create_reference: true, tag: asset-sync, journal: true, bmc_custom_field: true, vm_role_required: true}

@@ -1,0 +1,102 @@
+# asset-sync settings (no secrets here; secrets come from env / Ansible Vault)
+netbox:
+  min_version: "4.1"
+
+# Defaults applied when inventory/host_overrides.yml does not set a value.
+# Leave null to force review instead of guessing.
+defaults:
+  site: null          # site slug
+  device_role: null   # device role slug for physical servers
+  vm_role: null       # device role slug for VMs
+  cluster: null       # cluster name for VMs
+
+# Classification objects created by playbooks/netbox_bootstrap.yml (human-approved list)
+# 데모: 가상 회사 "데모클라우드"의 IDC 2곳. 실제 조직/장소와 무관합니다.
+classification:
+  sites:
+    - {name: "데모 IDC-A", slug: idc-a}
+    - {name: "데모 IDC-B", slug: idc-b}
+  locations:
+    - {name: "서버실", slug: idc-a-sr, site: idc-a}
+  racks:   # Excel "서버 위치" A01-42 -> rack A01 (42U)
+    - {name: A01, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: A02, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: A03, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: A04, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: A05, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: A06, site: idc-a, location: idc-a-sr, u_height: 42}
+  device_roles:
+    - {name: "Server", slug: server, color: "2196f3", vm_role: false}
+    - {name: "GPU Server", slug: gpu-server, color: "4caf50", vm_role: false}
+    - {name: "Network", slug: network, color: "ff9800", vm_role: false}
+    - {name: "Storage", slug: storage, color: "9c27b0", vm_role: false}
+    - {name: "PDU/UPS", slug: pdu-ups, color: "795548", vm_role: false}
+    - {name: "VM", slug: vm, color: "607d8b", vm_role: true}
+  cluster_types:
+    - {name: "Nutanix AHV", slug: nutanix-ahv}
+    - {name: "Proxmox VE", slug: proxmox-ve}
+    - {name: "VMware ESXi", slug: vmware-esxi}
+  clusters:
+    - {name: demo-nutanix, type: nutanix-ahv, site: idc-a}
+    - {name: demo-proxmox, type: proxmox-ve, site: idc-a}
+    - {name: demo-esxi, type: vmware-esxi, site: idc-a}
+
+# Asset spreadsheet input (assetctl.py import-excel). Credential/remark/personal columns are never read.
+excel:
+  sheet: "장비 목록"
+  site: idc-a
+  include_categories: [서버실]   # first column value; 사무실/창고 ... are excluded
+  include_vms: true
+  vm_category: VM
+  vm_role: vm
+  default_os_family: null        # no OS column in the sheet: set per host in inventory/host_overrides.yml
+  role_rules:                    # first match wins; "-" or no match (switch, PDU, storage) = not imported
+    - ['Cray\s*(CS|SC)\b|ClusterStor', '-']        # Cray ClusterStor storage enclosures
+    - ['DGX|HGX|Apollo\s*6500|XD\d{3}|S74G|GH200|GPU', gpu-server]
+    - ['\bD[LX]\d{3}\b|ProLiant|PowerEdge|Synergy|QuantaGrid|Gen\s?\d+|Cray', server]
+  cluster_map:                   # Excel "서버 위치" for VM rows -> NetBox cluster
+    Nutanix: demo-nutanix
+    Proxmox: demo-proxmox
+    ESXi: demo-esxi
+
+# Known subnets (all /24). Collected prefixes always win.
+# 데모는 문서/예제용 예약 대역(RFC 5737)만 사용합니다.
+subnets:
+  - 192.0.2.0/24       # OS
+  - 203.0.113.0/24     # GPU
+  - 198.51.100.0/24    # BMC (mock Redfish)
+
+hosts_parse:
+  domain_suffixes: []        # e.g. [corp.example.com]
+  bmc_name_patterns:
+    - '-(bmc|ipmi|idrac|ilo|imm|xcc|oob|mgmt)$'
+    - '^(bmc|ipmi|idrac|ilo)-'
+
+interfaces:
+  # never registered (container/virtual plumbing). Real NIC names are stored as-is.
+  exclude_regex: '^(lo|veth.*|docker\d*|br-[0-9a-f]{12}|virbr\d+-nic|cali.*|flannel.*|cni\d*|vxlan\.calico|tun\d+|tap.*|kube-ipvs0|isatap.*|Loopback.*)$'
+
+manufacturer_aliases:
+  "Dell Inc.": Dell
+  "Dell": Dell
+  "HP": HPE
+  "HPE": HPE
+  "Hewlett Packard Enterprise": HPE
+  "Hewlett-Packard": HPE
+  "Lenovo": Lenovo
+  "Supermicro": Supermicro
+  "Super Micro Computer Inc.": Supermicro
+  "Super Micro Computer, Inc.": Supermicro
+  "Cisco Systems Inc": Cisco
+  "FUJITSU": Fujitsu
+  "Inspur": Inspur
+
+sync:
+  max_hosts: 5                 # --apply aborts if more assets would change (raise explicitly after pilot)
+  auto_create_reference: true  # manufacturer / device type / platform from high-confidence values
+  default_status: active
+  tag: asset-sync
+  journal: true                # provenance journal entry on create/update
+  bmc_custom_field: true
+  vm_role_required: true
+  vm_serial: false             # VM BIOS serials are hypervisor-generated; keep off unless wanted

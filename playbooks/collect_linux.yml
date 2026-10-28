@@ -1,0 +1,91 @@
+---
+# Read-only collection over SSH. No package installs, no config changes.
+# Hosts that are unreachable or deny auth are skipped and the reason is written to data/raw/linux/<host>.status.json
+- name: Collect Linux hardware/OS/network facts (read-only)
+  hosts: "{{ target | default('linux') }}"
+  gather_facts: false
+  any_errors_fatal: false
+  vars:
+    raw_dir: "{{ playbook_dir }}/../data/raw/linux"
+    # sudo is only used to read DMI serial/asset tag and run 'ipmitool lan print'
+    collect_become: false
+    collect_ipmi_local: false
+    keep_fact_keys:
+      - hostname
+      - fqdn
+      - nodename
+      - system_vendor
+      - product_name
+      - product_serial
+      - product_uuid
+      - chassis_asset_tag
+      - chassis_serial
+      - board_serial
+      - distribution
+      - distribution_version
+      - distribution_major_version
+      - os_family
+      - kernel
+      - architecture
+      - virtualization_role
+      - virtualization_type
+      - virtualization_tech_guest
+      - virtualization_tech_host
+      - interfaces
+      - default_ipv4
+      - default_ipv6
+      - all_ipv4_addresses
+      - all_ipv6_addresses
+      - processor_count
+      - memtotal_mb
+  tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset: ["!all", "min", "hardware", "network", "virtual"]
+        gather_timeout: 30
+      become: "{{ collect_become | bool }}"
+      register: facts_result
+      ignore_unreachable: true
+      ignore_errors: true
+      no_log: true
+
+    - name: Record skip reason
+      when: facts_result.unreachable | default(false) or facts_result.failed | default(false)
+      ansible.builtin.copy:
+        dest: "{{ raw_dir }}/{{ inventory_hostname }}.status.json"
+        mode: "0600"
+        content: "{{ {'host': inventory_hostname, 'collector': 'linux_ssh', 'status': 'skipped',
+                      'reason': ('unreachable' if facts_result.unreachable | default(false) else 'failed'),
+                      'detail': (facts_result.msg | default('') | regex_replace('(?i)(password|token)\\S*', '***'))[:300],
+                      'collected_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%S+00:00')} | to_nice_json }}"
+      delegate_to: localhost
+
+    - name: Stop processing skipped host
+      when: facts_result.unreachable | default(false) or facts_result.failed | default(false)
+      ansible.builtin.meta: end_host
+
+    - name: Read local BMC LAN config (optional, read-only)
+      when: collect_ipmi_local | bool
+      ansible.builtin.command: ipmitool lan print
+      become: true
+      register: ipmi_lan
+      changed_when: false
+      failed_when: false
+
+    - name: Write raw payload
+      vars:
+        iface_keys: "{{ facts_result.ansible_facts.ansible_interfaces | default([])
+                        | map('regex_replace', '[-.:]', '_') | map('regex_replace', '^', 'ansible_') | list }}"
+        keep: "{{ keep_fact_keys | map('regex_replace', '^', 'ansible_') | list + iface_keys }}"
+        facts: "{{ facts_result.ansible_facts | dict2items | selectattr('key', 'in', keep) | items2dict }}"
+      ansible.builtin.copy:
+        dest: "{{ raw_dir }}/{{ inventory_hostname }}.json"
+        mode: "0600"
+        content: "{{ {'host': inventory_hostname, 'collector': 'linux_ssh', 'status': 'ok',
+                      'connected_ip': ansible_host | default(inventory_hostname),
+                      'privileged': collect_become | bool,
+                      'collected_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%S+00:00'),
+                      'facts': facts,
+                      'ipmi_lan': (ipmi_lan.stdout | default('')) if (ipmi_lan.rc | default(1)) == 0 else ''} | to_nice_json }}"
+      delegate_to: localhost
+      no_log: true

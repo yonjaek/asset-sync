@@ -1,0 +1,7 @@
+[Unit]
+Description=NetBox backup (pg_dump + media + env)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/asset-sync
+ExecStart=/opt/asset-sync/scripts/backup_netbox.sh

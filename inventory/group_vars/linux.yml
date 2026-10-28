@@ -1,0 +1,3 @@
+ansible_user: "{{ vault_linux_ssh_user | default(lookup('env', 'LINUX_SSH_USER')) }}"
+ansible_ssh_private_key_file: "{{ vault_linux_ssh_key_file | default(lookup('env', 'LINUX_SSH_KEY_FILE') | default('~/.ssh/id_asset_sync', true)) }}"
+ansible_become_password: "{{ vault_linux_become_password | default(omit) }}"

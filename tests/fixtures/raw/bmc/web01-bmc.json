@@ -1,0 +1,4 @@
+{"host": "198.51.100.11", "collector": "bmc_redfish", "status": "ok", "connected_ip": "198.51.100.11", "collected_at": "2026-10-27T01:02:00+00:00",
+ "systems": [{"id": "System.Embedded.1", "manufacturer": "Dell Inc.", "model": "PowerEdge R650", "serial": "ABC1234", "asset_tag": ""}],
+ "manager_interfaces": [{"manager": "iDRAC.Embedded.1", "id": "NIC.1", "mac": "aa:bb:cc:99:99:01",
+                         "ipv4": [{"address": "198.51.100.11", "netmask": "255.255.255.0", "origin": "Static"}]}]}

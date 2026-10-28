@@ -1,0 +1,121 @@
+---
+# Creates classification objects and the custom fields/tag asset-sync relies on.
+# Runs in check mode unless -e apply=true is passed (approval gate).
+#   ansible-playbook playbooks/netbox_bootstrap.yml                 # dry-run (diff only)
+#   ansible-playbook playbooks/netbox_bootstrap.yml -e apply=true   # write
+# Env: NETBOX_URL, NETBOX_WRITE_TOKEN. No delete tasks exist (state: present only).
+- name: Bootstrap NetBox classification for asset-sync
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    # self-signed / corporate CA for the NetBox API (pynetbox uses requests)
+    REQUESTS_CA_BUNDLE: "{{ lookup('ansible.builtin.env', 'NETBOX_CA_BUNDLE') | default(omit, true) }}"
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"  # venv with pynetbox
+    settings: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../config/settings.yml') | from_yaml }}"
+    nb_url: "{{ lookup('ansible.builtin.env', 'NETBOX_URL') }}"
+    nb_token: "{{ lookup('ansible.builtin.env', 'NETBOX_WRITE_TOKEN') | default(vault_netbox_write_token | default(''), true) }}"
+    nb_validate: "{{ lookup('ansible.builtin.env', 'NETBOX_VERIFY_TLS') | default('true', true) | bool }}"
+    apply: false
+    cls: "{{ settings.classification | default({}) }}"
+  module_defaults:
+    group/netbox.netbox.netbox:
+      netbox_url: "{{ nb_url }}"
+      netbox_token: "{{ nb_token }}"
+      validate_certs: "{{ nb_validate }}"
+  tasks:
+    - name: Guard - credentials present
+      ansible.builtin.assert:
+        that: [nb_url | length > 0, nb_token | length > 0]
+        fail_msg: "NETBOX_URL / NETBOX_WRITE_TOKEN not set"
+      no_log: true
+
+    - name: Tag asset-sync
+      netbox.netbox.netbox_tag:
+        data: {name: "{{ settings.sync.tag | default('asset-sync') }}", slug: "{{ settings.sync.tag | default('asset-sync') }}",
+               color: "9e9e9e", description: "Managed by asset-sync"}
+        state: present
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Custom field mgmt_nic (interfaces)
+      netbox.netbox.netbox_custom_field:
+        data:
+          name: mgmt_nic
+          label: "Management NIC"
+          type: boolean
+          object_types: [dcim.interface, virtualization.vminterface]
+          description: "True when this NIC carries the IP used to manage the host (set by asset-sync)"
+          required: false
+        state: present
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Custom field bmc_ip (devices)
+      netbox.netbox.netbox_custom_field:
+        data:
+          name: bmc_ip
+          label: "BMC IP"
+          type: text
+          object_types: [dcim.device]
+          description: "BMC/OOB address confirmed by Redfish/IPMI (set by asset-sync)"
+          required: false
+        state: present
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Sites
+      netbox.netbox.netbox_site:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}", status: active}
+        state: present
+      loop: "{{ cls.sites | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Locations
+      netbox.netbox.netbox_location:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}", site: "{{ item.site }}", status: active}
+        state: present
+      loop: "{{ cls.locations | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+      # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
+      ignore_errors: "{{ not (apply | bool) }}"
+
+    - name: Racks
+      netbox.netbox.netbox_rack:
+        data:
+          name: "{{ item.name }}"
+          site: "{{ item.site }}"
+          location: "{{ item.location | default(omit) }}"
+          u_height: "{{ item.u_height | default(42) }}"
+          status: active
+        state: present
+      loop: "{{ cls.racks | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+      # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
+      ignore_errors: "{{ not (apply | bool) }}"
+
+    - name: Device roles
+      netbox.netbox.netbox_device_role:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}", color: "{{ item.color | default('9e9e9e') }}",
+               vm_role: "{{ item.vm_role | default(true) }}"}
+        state: present
+      loop: "{{ cls.device_roles | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Cluster types
+      netbox.netbox.netbox_cluster_type:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}"}
+        state: present
+      loop: "{{ cls.cluster_types | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Clusters
+      netbox.netbox.netbox_cluster:
+        data:
+          name: "{{ item.name }}"
+          cluster_type: "{{ item.type }}"
+          scope_type: "{{ 'dcim.site' if item.site is defined else omit }}"
+          scope: "{{ item.site | default(omit) }}"
+        state: present
+      loop: "{{ cls.clusters | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+      # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
+      ignore_errors: "{{ not (apply | bool) }}"

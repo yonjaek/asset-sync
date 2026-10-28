@@ -1,0 +1,13 @@
+---
+# ansible-galaxy collection install -r requirements.yml -p ./collections
+collections:
+  - name: netbox.netbox
+    version: ">=3.20.0"
+  - name: ansible.windows
+    version: ">=2.5.0"
+  - name: community.windows
+    version: ">=2.3.0"
+  - name: community.general
+    version: ">=9.0.0"
+  - name: ansible.utils
+    version: ">=5.0.0"

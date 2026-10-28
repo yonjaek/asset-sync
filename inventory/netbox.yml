@@ -1,0 +1,25 @@
+# NetBox dynamic inventory (read-only). Usage:
+#   set -a; . ./.env; set +a
+#   NETBOX_API=$NETBOX_URL ansible-inventory -i inventory/netbox.yml --graph
+# Env: NETBOX_API (URL), NETBOX_TOKEN (read-only token).
+# v2 tokens (nbt_...) need: token: {type: Bearer, value: "<token>"} — see README.
+plugin: netbox.netbox.nb_inventory
+validate_certs: true
+plurals: false
+config_context: false
+interfaces: false
+flatten_custom_fields: true
+fetch_all: true
+# only objects managed by asset-sync and with a primary IP (ansible_host is set from primary_ip4/6)
+query_filters:
+  - tag: asset-sync
+device_query_filters:
+  - has_primary_ip: "true"
+vm_query_filters:
+  - has_primary_ip: "true"
+group_by:
+  - site
+  - role
+  - platform
+  - cluster
+  - status

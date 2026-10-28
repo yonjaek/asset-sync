@@ -1,0 +1,25 @@
+# 가짜 Redfish BMC (데모 전용). BMC 주소는 RFC 5737 문서용 대역 198.51.100.0/24 입니다.
+# 호스트에서 이 대역으로 가는 경로는 Docker 브리지가 자동으로 만들어 줍니다 (Linux Docker 기준).
+name: asset-sync-mock-bmc
+services:
+  mock-bmc:
+    build: .
+    image: asset-sync/mock-bmc:demo
+    cap_add: [NET_ADMIN]          # BMC 주소(/32)를 eth0에 추가하기 위해 필요 (컨테이너 내부에만 적용)
+    environment:
+      MOCK_BMC_USER: ${BMC_USERNAME:-demo}
+      MOCK_BMC_PASSWORD: ${BMC_PASSWORD:-demo-password}
+      MOCK_BMC_SLOW_SECONDS: "20"
+    volumes:
+      - ./scenario.json:/app/scenario.json:ro
+    networks:
+      bmcnet:
+        ipv4_address: 198.51.100.2
+    restart: unless-stopped
+networks:
+  bmcnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 198.51.100.0/24
+          gateway: 198.51.100.1

@@ -1,0 +1,19 @@
+# sample corporate hosts file (synthetic test data)
+127.0.0.1   localhost localhost.localdomain
+::1         localhost ip6-localhost
+192.0.2.11  web01.corp.example.com web01 www     # physical, BMC below
+192.0.2.12  app01            # VM
+192.0.2.13  win01
+192.0.2.14  db01
+192.0.2.15  db02
+192.0.2.15  db02-old         # duplicate IP, different host
+192.0.2.16  dup01
+192.0.2.17  dup01            # duplicate hostname
+198.51.100.11  web01-bmc
+192.0.2.300 broken01         # invalid IP
+192.0.2.18                   # no hostname
+192.0.2.19/24 masked01       # mask in hosts file
+fd00:10::11 web01            # IPv6 dual stack
+192.0.2.20  bad_name!
+192.0.2.21  other www        # alias clash with web01
+	192.0.2.22	tabbed01	# tabs

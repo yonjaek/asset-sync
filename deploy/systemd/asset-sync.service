@@ -1,0 +1,13 @@
+[Unit]
+Description=asset-sync: collect inventory and sync to NetBox
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/asset-sync
+# dry-run by default; ExecStart switches to --apply --yes only if ASSET_SYNC_AUTO_APPLY=true in .env
+ExecStart=/bin/bash -c 'set -a; . ./.env; set +a; if [ "$ASSET_SYNC_AUTO_APPLY" = true ]; then exec scripts/run_pipeline.sh --apply --yes; else exec scripts/run_pipeline.sh; fi'
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

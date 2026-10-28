@@ -1,0 +1,20 @@
+# Copy to inventory/host_overrides.yml. Per-host facts that cannot be safely discovered
+# without scanning: OS family (which collector to use), site, role, cluster, BMC.
+hosts:
+  web01:
+    os_family: linux        # linux | windows
+    site: dc1
+    role: server
+  web02:
+    os_family: linux
+    site: dc1
+    role: server
+    bmc: web02-bmc          # hostname from hosts file, or an IP
+    bmc_type: redfish       # redfish | ipmi
+  app-win01:
+    os_family: windows
+    role: server
+    cluster: hv-cluster-01  # only used if the host turns out to be a VM
+  legacy01:
+    skip: true
+    reason: "no access agreement"

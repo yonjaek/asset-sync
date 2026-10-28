@@ -1,0 +1,7 @@
+ansible_connection: winrm
+ansible_port: 5986
+ansible_winrm_scheme: https
+ansible_winrm_transport: kerberos          # or ntlm / credssp per site policy
+ansible_winrm_server_cert_validation: validate
+ansible_user: "{{ vault_windows_user | default(lookup('env', 'WINRM_USER')) }}"
+ansible_password: "{{ vault_windows_password | default(lookup('env', 'WINRM_PASSWORD')) }}"
