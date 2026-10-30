@@ -115,6 +115,32 @@ flowchart LR
 
 **준비물**: Linux, Docker와 Compose v2, Python 3.11 이상, 메모리 4GB 이상, 인터넷(이미지와 패키지 다운로드)
 
+<details>
+<summary>Rocky Linux 9 준비 (VMware VM에서 검증, root 권한 필요)</summary>
+
+```bash
+# Docker CE + Compose v2 (podman/runc가 설치돼 있으면 충돌하므로 먼저 제거: dnf remove podman buildah runc)
+sudo dnf -y install dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+
+# Python 3.12 (Makefile이 python3.12를 우선 사용. 기본 python3는 3.9라 쓰지 않음)
+sudo dnf -y install python3.12 git make openssl
+
+# 다른 PC(예: Windows 호스트 브라우저)에서 접속할 때만: 80(→443 리다이렉트), 443
+sudo firewall-cmd --permanent --zone=public --add-service=http --add-service=https
+sudo firewall-cmd --reload
+
+# root가 아닌 사용자로 실행할 때
+sudo usermod -aG docker "$USER"                          # 다시 로그인 필요
+sudo install -d -o "$USER" -g "$USER" /opt/netbox-docker
+```
+
+`.env`에서 `NETBOX_PUBLIC_IP`와 `NETBOX_URL`(`https://<VM IP>`)을 VM IP로 바꾼 뒤 `make netbox`를 실행합니다.
+인증서 SAN에 이 IP가 들어가므로 `NETBOX_VERIFY_TLS=true`를 그대로 쓸 수 있습니다.
+</details>
+
 ```bash
 git clone asset-sync.bundle asset-sync && cd asset-sync
 make setup            # venv + 의존성 + Ansible collection
@@ -129,13 +155,23 @@ make demo-rerun       # 쓰기 0건 확인
 ```
 
 - **NetBox 접속**: 브라우저로 `https://127.0.0.1`에 접속합니다. 계정은 `admin`, 비밀번호는 `demo/.netbox_admin`에 있습니다.
-- **다른 PC에서 보려면**: `.env`의 `NETBOX_PUBLIC_IP`를 VM IP로 바꾸고 `make netbox`를 실행합니다.
+- **다른 PC에서 보려면**: `.env`의 `NETBOX_PUBLIC_IP`와 `NETBOX_URL`을 VM IP로 바꾸고 `make netbox`를 실행합니다 (방화벽 80/443 필요).
 - **`/opt`에 쓸 권한이 없으면**: `.env`의 `NETBOX_DOCKER_DIR`를 `$HOME/netbox-docker` 등으로 바꾸고, `NETBOX_CA_BUNDLE`도 같은 경로로 맞춥니다.
 - **결과물 위치**
   - `reports/sync_plan_*.md`: 계획
   - `reports/review_report.csv`: 검토 목록
   - `reports/run_report.csv`: 성공 / 실패 / 미확인 / 중복 집계
 - **단위 테스트**: `make test`로 실행합니다. 인메모리 Fake NetBox로 돌기 때문에 서버나 NetBox가 필요 없습니다.
+
+**데모 재현 시 보이는 메시지** (Rocky 9.8 VM, netbox-docker 5.1.1 / NetBox 4.7, Docker 29에서 재현)
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| 브라우저에서 인증서 경고 | 배포 시 만든 자체 서명 인증서 | `/opt/netbox-docker/proxy/certs/netbox.crt`를 클라이언트 PC의 "신뢰할 수 있는 루트 인증 기관"에 가져오기 |
+| `make bootstrap`(check 모드)에서 Location / Rack / Cluster가 `Could not resolve id` | 미리보기라 상위 객체(Site, Cluster type)가 아직 없음 | 정상. `make bootstrap-apply`에서는 순서대로 생성되고, 실패하면 오류로 멈춤 |
+| `make netbox-init`에서 `LOGIN_REQUIRED is deprecated` 경고 | netbox-docker 기본 설정이 NetBox 4.7에서 폐기 예정인 항목을 씀 | 동작에 영향 없음 |
+| `curl https://198.51.100.x/...`가 인증서 오류(60) | 가짜 BMC도 자체 서명 인증서 | 정상. asset-sync는 `bmc-trust`로 기록한 지문만 허용(`BMC_VERIFY_TLS=pin`) |
+| `demo-apply`의 `review rows`(16)가 dry-run(33)보다 적음 | apply는 변경 대상 13대만 다시 처리 | 정상. 전체 목록은 `reports/review_report.csv`, apply분은 `review_report_apply_*.csv` |
 
 ## 실제 환경에 적용하며 겪은 문제와 해결
 
