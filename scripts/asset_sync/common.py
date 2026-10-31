@@ -138,6 +138,11 @@ def write_yaml(path: Path | str, data: Any) -> Path:
     return p
 
 
+def excel_ref(xl: dict) -> str:
+    """Excel row reference for provenance: 'row12', or '판교 IDC!row12' for a multi-sheet workbook."""
+    return f"{xl['sheet']}!row{xl.get('row')}" if xl.get("multi_sheet") else f"row{xl.get('row')}"
+
+
 def slugify(text: str) -> str:
     s = re.sub(r"[^a-z0-9_-]+", "-", str(text).strip().lower())
     return re.sub(r"-{2,}", "-", s).strip("-")[:100] or "unknown"

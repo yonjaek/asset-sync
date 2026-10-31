@@ -1,15 +1,16 @@
 # asset-sync 데모 실행용 Makefile
 # 순서: make setup → make env → make netbox → make netbox-init → make bootstrap-apply
-#       → make demo-data mock-bmc → make demo → make demo-apply → make demo-rerun
+#       → make demo-data mock-bmc → make seed-apply → make demo → make demo-apply → make demo-rerun
 SHELL := /bin/bash
 PYTHON ?= $(shell command -v python3.12 || command -v python3.11 || command -v python3)
 PY := .venv/bin/python
 AP := .venv/bin/ansible-playbook
 ENV := set -a; . ./.env; set +a;
-DEMO_MAX_HOSTS ?= 20
+# 데모 전용 쓰기 상한 (서버 약 150대). 실제 환경은 settings.yml 의 sync.max_hosts(기본 5)부터 단계적으로 올린다
+DEMO_MAX_HOSTS ?= 200
 
 .PHONY: help setup env test demo-data mock-bmc mock-bmc-down netbox netbox-init bootstrap bootstrap-apply \
-        demo demo-apply demo-rerun report mcp
+        seed seed-apply demo demo-apply demo-rerun report mcp
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-16s %s\n", $$1, $$2}'
@@ -47,6 +48,14 @@ bootstrap: ## Site/Rack/Role/Cluster/커스텀 필드 계획 (check 모드, 쓰�
 
 bootstrap-apply: ## 위 분류 체계를 실제로 생성
 	$(ENV) $(AP) -i localhost, playbooks/netbox_bootstrap.yml -e apply=true
+
+seed: ## 네트워크·설비 데모 장비/IPAM 계획 (check 모드, 쓰기 없음)
+	@[ -f demo/data/netbox_seed.json ] || $(MAKE) demo-data
+	$(ENV) $(AP) -i localhost, playbooks/netbox_demo_seed.yml
+
+seed-apply: ## 위 데모 장비/IPAM 을 실제로 생성 (스위치·방화벽·PDU·UPS·항온항습기·VLAN·Prefix)
+	@[ -f demo/data/netbox_seed.json ] || $(MAKE) demo-data
+	$(ENV) $(AP) -i localhost, playbooks/netbox_demo_seed.yml -e apply=true
 
 demo: ## 엑셀 가져오기 → BMC 인증서 고정 → Redfish 수집 → 대조 → dry-run 계획 → 보고
 	$(ENV) $(PY) scripts/assetctl.py import-excel --file "$$ASSET_SYNC_EXCEL_FILE" --site "$$ASSET_SYNC_EXCEL_SITE"

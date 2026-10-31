@@ -5,9 +5,9 @@ hosts 파일 또는 자산 엑셀에서 출발해 IT 자산을 수집·검증하
 
 ## 반드시 지킬 규칙
 - **NetBox 쓰기는 사용자 승인 후에만**: `assetctl.py sync`는 기본 dry-run이다. `--apply`, `netbox_bootstrap.yml -e apply=true`,
-  `deploy_netbox.sh --apply`는 사용자가 이번 대화에서 명시적으로 승인했을 때만 실행한다. 이전 승인은 다음 작업으로 이어지지 않는다.
+  `netbox_demo_seed.yml -e apply=true`(`make seed-apply`), `deploy_netbox.sh --apply`는 사용자가 이번 대화에서 명시적으로 승인했을 때만 실행한다. 이전 승인은 다음 작업으로 이어지지 않는다.
 - **삭제 금지**: 삭제 코드는 없다. 추가하지 말 것. 오래된(stale) 객체는 보고만 한다.
-- **대량 등록 금지**: `sync.max_hosts`(기본 5)를 사용자 승인 없이 올리지 않는다.
+- **대량 등록 금지**: `sync.max_hosts`(기본 5)를 사용자 승인 없이 올리지 않는다. `make demo-apply`는 데모용 `DEMO_MAX_HOSTS`(200)를 쓰므로 실행 전 승인이 필요하다.
 - **무단 스캔·대상 변경 금지**: nmap/ping sweep/포트 스캔 금지. 수집은 host_overrides.yml에 OS가 지정된 호스트만,
   읽기 전용(facts, Get-CimInstance, Redfish GET, ipmitool print)으로 한다.
 - **값을 지어내지 않는다**: placeholder(`To Be Filled By O.E.M.` 등)는 버린다. NIC 이름은 수집된 그대로 쓴다(eth1 등으로 바꾸지 말 것).
@@ -16,8 +16,8 @@ hosts 파일 또는 자산 엑셀에서 출발해 IT 자산을 수집·검증하
   (`common.mask()` 사용). `data/`, `reports/`, `inventory/hosts.generated.yml`은 커밋하지 않는다.
 
 ## MCP
-- `netbox` MCP(netboxlabs/netbox-mcp-server)는 **읽기 전용**이며 조회·검증에만 쓴다. 쓰기는 `scripts/assetctl.py sync --apply`
-  또는 `playbooks/netbox_bootstrap.yml`로 한다.
+- `netbox` MCP(netboxlabs/netbox-mcp-server)는 **읽기 전용**이며 조회·검증에만 쓴다. 쓰기는 `scripts/assetctl.py sync --apply`,
+  `playbooks/netbox_bootstrap.yml`, (데모 전용) `playbooks/netbox_demo_seed.yml`로 한다.
 
 ## 주요 명령
 ```bash
@@ -36,17 +36,20 @@ set -a; . ./.env; set +a
 ## 데모
 ```bash
 make setup env netbox netbox-init bootstrap-apply   # 최초 1회
-make demo-data mock-bmc demo                         # 가짜 엑셀 + 가짜 BMC → dry-run 계획
+make demo-data mock-bmc seed-apply demo              # 가짜 엑셀 + 가짜 BMC + 네트워크·설비 seed → dry-run 계획
 make demo-apply demo-rerun                           # 반영(확인 프롬프트) → 쓰기 0건 확인
 ```
 - 가짜 BMC는 198.51.100.0/24(RFC 5737)에서 동작한다. 실제 장비 주소로 바꾸지 않는다.
-- 데모 시나리오를 바꾸려면 `demo/generate_demo_data.py`의 `SERVERS`를 고치고 `make demo-data`를 다시 실행한다.
+- 데모 시나리오를 바꾸려면 `demo/generate_demo_data.py`의 `SITES`(센터·랙·서버 그룹), `SCENARIOS`(예외 시나리오)를 고치고
+  `make demo-data`를 다시 실행한다. 랙 구성은 `config/settings.yml`의 `rack_groups`와 같아야 한다.
+- 네트워크·설비 장비(`demo-seed` 태그)는 asset-sync 대상이 아니다. sync는 이 장비들과 랙 U가 겹치는지만 확인한다.
 
 ## 구조
 - `scripts/asset_sync/hostsparse.py`: hosts 파싱/검증/inventory 생성
 - `scripts/asset_sync/normalize.py`: 수집 원본 → 필드별 {value, source, collected_at, confidence}
-- `scripts/asset_sync/sync.py`: 식별자 검증 → 생성 / 빈 값 채우기 / review. dry-run과 apply는 같은 코드 경로를 쓴다(`Writer`)
-- `scripts/asset_sync/excelimport.py`: 자산 엑셀 가져오기 (비밀번호/비고/담당자 열은 읽지 않음)
+- `scripts/asset_sync/sync.py`: 식별자 검증 → 생성 / 빈 값 채우기 / review. dry-run과 apply는 같은 코드 경로를 쓴다(`Writer`).
+  랙 U 위치는 시리얼 확인 + 빈 U일 때만 넣는다(`_placement`)
+- `scripts/asset_sync/excelimport.py`: 자산 엑셀 가져오기 (IDC별 시트 지원, 비밀번호/비고/담당자 열은 읽지 않음)
 - `scripts/asset_sync/bmc.py`: Redfish GET / ipmitool 읽기, 인증서 지문 고정
 - `playbooks/collect_*.yml`: 읽기 전용 수집, 실패 사유는 `data/raw/<os>/<host>.status.json`
 - 테스트는 `tests/fakenetbox.py`(인메모리 NetBox)를 사용한다. sync 규칙을 바꾸면 테스트도 같이 바꾼다.

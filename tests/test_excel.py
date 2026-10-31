@@ -16,6 +16,8 @@ from asset_sync.sync import Syncer  # noqa: E402
 from fakenetbox import FakeNetBox  # noqa: E402
 
 SETTINGS = yaml.safe_load((ROOT / "config" / "settings.yml").read_text())
+# the test workbook is a single-sheet ledger: pin site/cluster mapping instead of the demo's per-IDC sheet map
+SETTINGS["excel"].update(sheets=None, site="idc-a", cluster_map={"Nutanix": "demo-nutanix"})
 SECRET = "SuperSecret!!42"
 HDR = ["", "서버 위치", "모델명", "S/N", "담당자\n(서버용도)", "사용 기간", "MGMT IP", "MGMT MAC", "SW MGMT\nport",
        "hostname", "OS IP", "OS MAC", "SW OS\nport", "Storage IP", "ID / PW", "PSU", "비고"]
@@ -137,10 +139,56 @@ def test_excel_confirmed_then_rack_applied(imported, tmp_path):
     nb = _nb()
     run = Syncer(nb, SETTINGS, apply=True).run([a])
     dev = next(iter(nb.db["dcim/devices"].values()))
-    assert dev["rack"] == 5 and dev["location"] == 4 and "position" not in dev
+    assert dev["rack"] == 5 and dev["location"] == 4 and (dev["position"], dev["face"]) == (40, "front")
+    assert next(iter(nb.db["dcim/device-types"].values()))["u_height"] == 2  # merged cells of a serial-confirmed row
+    journal = next(iter(nb.db["extras/journal-entries"].values()))["comments"]
+    assert "position<-excel:row3(confirmed_by_serial)" in journal
     assert "bmc_ip" not in dev.get("custom_fields", {})
-    assert any(r["field"] == "position" and "U40" in str(r["collected_value"]) for r in run["review"])
+    assert not any(r["field"] == "position" for r in run["review"])
     assert any(r["field"] == "bmc_ip" and r["confidence"] == "medium" for r in run["review"])
+    assert Syncer(nb, SETTINGS, apply=True).run([a])["ops"] == []  # idempotent: position already set
+
+
+def _confirmed_asset(imported, tmp_path):
+    hosts = {"gpu-web01": copy.deepcopy(imported[0]["gpu-web01"])}
+    return normalize.build_assets(hosts, _raw(tmp_path), SETTINGS)[0]
+
+
+def test_position_not_applied_when_occupied(imported, tmp_path):
+    nb = _nb()
+    sw_type = nb.add("dcim/device-types", model="Leaf 48x25G", slug="leaf", u_height=1)
+    nb.add("dcim/devices", name="pg-leaf-a01-1", site=1, rack=5, position=41, device_type=sw_type["id"])  # U41 of U40-41
+    run = Syncer(nb, SETTINGS, apply=True).run([_confirmed_asset(imported, tmp_path)])
+    dev = next(d for d in nb.db["dcim/devices"].values() if d["name"] == "gpu-web01")
+    assert dev["rack"] == 5 and "position" not in dev
+    assert any(r["field"] == "position" and "occupied by pg-leaf-a01-1" in r["reason"] for r in run["review"])
+
+
+def test_existing_position_never_moved(imported, tmp_path):
+    nb = _nb()
+    nb.add("dcim/devices", name="gpu-web01", serial="SGH111", site=1, role=2, rack=5, position=10)
+    run = Syncer(nb, SETTINGS, apply=True).run([_confirmed_asset(imported, tmp_path)])
+    dev = next(d for d in nb.db["dcim/devices"].values() if d["name"] == "gpu-web01")
+    assert dev["position"] == 10
+    assert not any("position" in c[3] for c in nb.writes() if c[0] == "PATCH")
+    assert any(r["field"] == "position" and r["netbox_value"] == "U10" for r in run["review"])
+
+
+def test_position_needs_matching_device_type_height(imported, tmp_path):
+    nb = _nb()
+    mfr = nb.add("dcim/manufacturers", name="HPE", slug="hpe")
+    nb.add("dcim/device-types", manufacturer=mfr["id"], model="ProLiant DL380 Gen10", slug="hpe-proliant-dl380-gen10", u_height=1)
+    run = Syncer(nb, SETTINGS, apply=True).run([_confirmed_asset(imported, tmp_path)])
+    dev = next(d for d in nb.db["dcim/devices"].values() if d["name"] == "gpu-web01")
+    assert "position" not in dev
+    assert any(r["field"] == "position" and "height 1U differs from Excel 2U" in r["reason"] for r in run["review"])
+
+
+def test_dry_run_plans_position(imported, tmp_path):
+    nb = _nb()
+    run = Syncer(nb, SETTINGS, apply=False).run([_confirmed_asset(imported, tmp_path)])
+    dev_op = next(o for o in run["ops"] if o["endpoint"] == "dcim/devices")
+    assert {"position", "face"} <= set(dev_op["fields"]) and nb.writes() == []
 
 
 def test_excel_serial_mismatch_blocks_rack(imported, tmp_path):
@@ -242,3 +290,29 @@ def test_generic_and_override_names(xlsx):
     assert hosts["ip-192-0-2-21"]["name_trusted"] is False            # "localhost" never used as a name
     assert "ahv01" in hosts and hosts["ahv01"]["name_trusted"] is True    # human-assigned via host_overrides
     assert hosts["ahv01"]["rack"] == "A03" and hosts["ahv01"]["ansible_host"] == "192.0.2.22"
+
+
+def test_multi_sheet_workbook(tmp_path):
+    p = tmp_path / "idc.xlsx"
+    wb = openpyxl.Workbook()
+    for i, (title, host, vm_pos) in enumerate((("판교 IDC", "pg-web-001", "Nutanix"), ("동탄 AI센터", "dt-gpu-001", "Proxmox"))):
+        ws = wb.active if i == 0 else wb.create_sheet()
+        ws.title = title
+        for c, h in enumerate(HDR, 1):
+            ws.cell(1, c, h)
+        _row(ws, 2, "서버실", "A01-40", "DL360 Gen11", f"SN{i}", "", host, f"192.0.2.{10 + i}")
+        _row(ws, 3, "VM", vm_pos, "", "", "", f"vm-{i}", f"203.0.113.{10 + i}")
+        _row(ws, 4, "서버실", "A01-39", "DL360 Gen11", f"SNX{i}", "", "shared-01", f"192.0.2.{20 + i}")  # same name in both
+    wb.save(p)
+    settings = copy.deepcopy(SETTINGS)
+    settings["excel"].update(sheets={"판교 IDC": {"site": "pangyo", "cluster_map": {"Nutanix": "pg-nutanix-01"}},
+                                     "동탄 AI센터": {"site": "dongtan", "cluster_map": {"Proxmox": "dt-proxmox-01"}}},
+                             site=None, cluster_map={})
+    hosts, rows = excelimport.build_hosts_from_excel(p, settings, {})
+    assert (hosts["pg-web-001"]["site"], hosts["dt-gpu-001"]["site"]) == ("pangyo", "dongtan")
+    assert (hosts["vm-0"]["cluster"], hosts["vm-1"]["cluster"]) == ("pg-nutanix-01", "dt-proxmox-01")
+    dups = sorted(k for k in hosts if k.startswith("shared-01"))
+    assert dups == ["shared-01", "shared-01~dongtan-row4"] and all(hosts[k]["status"] == "review" for k in dups)
+    assert {r["sheet"] for r in rows} == {"판교 IDC", "동탄 AI센터"}
+    a = normalize.build_assets({"dt-gpu-001": hosts["dt-gpu-001"]}, tmp_path / "raw", settings)[0]
+    assert a["fields"]["serial"]["source"] == "excel:동탄 AI센터!row2"  # provenance names the sheet

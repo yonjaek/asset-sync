@@ -1,0 +1,117 @@
+---
+# DEMO ONLY: stands in for what the network / facility teams already keep in NetBox (switches, routers, firewalls,
+# load balancers, PDUs, UPS, CRAC units, VLANs, prefixes). asset-sync does not collect or own these objects; they
+# give the server racks realistic neighbours (rack-position collisions are checked against them).
+# Input: demo/data/netbox_seed.json (written by `make demo-data`). Requires netbox_bootstrap.yml applied first.
+# Runs in check mode unless -e apply=true is passed (approval gate).
+#   ansible-playbook playbooks/netbox_demo_seed.yml                 # dry-run
+#   ansible-playbook playbooks/netbox_demo_seed.yml -e apply=true   # write
+# Env: NETBOX_URL, NETBOX_WRITE_TOKEN. No delete tasks exist (state: present only).
+- name: Seed demo network / facility objects
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    REQUESTS_CA_BUNDLE: "{{ lookup('ansible.builtin.env', 'NETBOX_CA_BUNDLE') | default(omit, true) }}"
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    seed_file: "{{ playbook_dir }}/../demo/data/netbox_seed.json"
+    seed: "{{ lookup('ansible.builtin.file', seed_file) | from_json }}"
+    nb_url: "{{ lookup('ansible.builtin.env', 'NETBOX_URL') }}"
+    nb_token: "{{ lookup('ansible.builtin.env', 'NETBOX_WRITE_TOKEN') | default(vault_netbox_write_token | default(''), true) }}"
+    nb_validate: "{{ lookup('ansible.builtin.env', 'NETBOX_VERIFY_TLS') | default('true', true) | bool }}"
+    apply: false
+  module_defaults:
+    group/netbox.netbox.netbox:
+      netbox_url: "{{ nb_url }}"
+      netbox_token: "{{ nb_token }}"
+      validate_certs: "{{ nb_validate }}"
+  tasks:
+    - name: Guard - credentials present
+      ansible.builtin.assert:
+        that: [nb_url | length > 0, nb_token | length > 0]
+        fail_msg: "NETBOX_URL / NETBOX_WRITE_TOKEN not set"
+      no_log: true
+
+    - name: Tag demo-seed
+      netbox.netbox.netbox_tag:
+        data: {name: "{{ seed.tag }}", slug: "{{ seed.tag }}", color: "607d8b",
+               description: "Demo data owned by the network / facility teams (not managed by asset-sync)"}
+        state: present
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Manufacturers
+      netbox.netbox.netbox_manufacturer:
+        data: {name: "{{ item }}", slug: "{{ item | lower | regex_replace('[^a-z0-9]+', '-') }}"}
+        state: present
+      loop: "{{ seed.manufacturers }}"
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Device types
+      netbox.netbox.netbox_device_type:
+        data:
+          manufacturer: "{{ item.manufacturer | lower | regex_replace('[^a-z0-9]+', '-') }}"
+          model: "{{ item.model }}"
+          slug: "{{ item.slug }}"
+          u_height: "{{ item.u_height }}"
+          is_full_depth: "{{ item.is_full_depth }}"
+        state: present
+      loop: "{{ seed.device_types }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      check_mode: "{{ not (apply | bool) }}"
+      # in check mode parents (manufacturer / device type / VLAN) do not exist yet, so lookups fail: preview only
+      ignore_errors: "{{ not (apply | bool) }}"
+
+    - name: Devices (network / power / cooling)
+      netbox.netbox.netbox_device:
+        data:
+          name: "{{ item.name }}"
+          device_type: "{{ item.device_type }}"
+          device_role: "{{ item.role }}"
+          site: "{{ item.site }}"
+          location: "{{ item.location }}"
+          rack: "{{ {'name': item.rack, 'site': item.site} if item.rack is defined else omit }}"
+          position: "{{ item.position | default(omit) }}"
+          face: "{{ item.face | default(omit) }}"
+          serial: "{{ item.serial }}"
+          status: active
+          tags: ["{{ seed.tag }}"]
+        state: present
+      loop: "{{ seed.devices }}"
+      loop_control:
+        label: "{{ item.site }}/{{ item.name }}"
+      check_mode: "{{ not (apply | bool) }}"
+      ignore_errors: "{{ not (apply | bool) }}"
+
+    - name: VLANs
+      netbox.netbox.netbox_vlan:
+        data:
+          site: "{{ item.site }}"
+          vid: "{{ item.vid }}"
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          status: active
+          tags: ["{{ seed.tag }}"]
+        state: present
+      loop: "{{ seed.vlans }}"
+      loop_control:
+        label: "{{ item.site }}/{{ item.vid }} {{ item.name }}"
+      check_mode: "{{ not (apply | bool) }}"
+
+    - name: Prefixes
+      netbox.netbox.netbox_prefix:
+        data:
+          prefix: "{{ item.prefix }}"
+          scope_type: dcim.site
+          scope: "{{ item.site }}"
+          vlan: "{{ item.vlan if item.vlan else omit }}"
+          description: "{{ item.description }}"
+          status: active
+          tags: ["{{ seed.tag }}"]
+        state: present
+      loop: "{{ seed.prefixes }}"
+      loop_control:
+        label: "{{ item.prefix }}"
+      check_mode: "{{ not (apply | bool) }}"
+      ignore_errors: "{{ not (apply | bool) }}"

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .common import clean, now_iso
+from .common import clean, excel_ref, now_iso
 
 HIGH, MEDIUM, CONFLICT = "high", "medium", "conflict"
 
@@ -347,7 +347,7 @@ def _confirm_name_by_serial(a: dict, xl: dict, name: str) -> None:
     s = a["fields"].get("serial")
     xs = clean(xl.get("serial"))
     if s and s["confidence"] == HIGH and "bmc_" in s["source"] and xs and _same("serial", s["value"], xs):
-        a["fields"]["hostname"] = fv(name, f"excel:row{xl.get('row')}(confirmed_by_bmc_serial)", s["collected_at"], HIGH)
+        a["fields"]["hostname"] = fv(name, f"excel:{excel_ref(xl)}(confirmed_by_bmc_serial)", s["collected_at"], HIGH)
     bmc_hn = clean(a.pop("_bmc_hostname", None))
     if bmc_hn and bmc_hn.lower().split(".")[0] != name:
         a["notes"].append(f"bmc_reported_hostname_differs:{bmc_hn.lower()}")
@@ -356,8 +356,8 @@ def _confirm_name_by_serial(a: dict, xl: dict, name: str) -> None:
 def excel_crosscheck(a: dict, xl: dict) -> None:
     """Compare spreadsheet values with collected ones. Collected (high) wins; differences are recorded.
     Without a collected value the spreadsheet value is kept as medium confidence (review, never auto-applied)."""
-    src, ts = f"excel:row{xl.get('row')}", xl.get("collected_at") or now_iso()
-    a["excel"] = {k: xl.get(k) for k in ("row", "rack", "position", "u_height", "kind")}
+    src, ts = f"excel:{excel_ref(xl)}", xl.get("collected_at") or now_iso()
+    a["excel"] = {k: xl.get(k) for k in ("sheet", "multi_sheet", "row", "rack", "position", "u_height", "kind")}
     a["excel_diffs"] = []
     for fname in ("serial", "model", "bmc_ip"):
         xv = clean(xl.get(fname))

@@ -19,6 +19,16 @@
     nb_validate: "{{ lookup('ansible.builtin.env', 'NETBOX_VERIFY_TLS') | default('true', true) | bool }}"
     apply: false
     cls: "{{ settings.classification | default({}) }}"
+    # rack_groups {prefix: A, first: 1, last: 10, ...} -> racks A01..A10, plus any explicit `racks` entries
+    racks: >-
+      {%- set out = cls.racks | default([]) | list -%}
+      {%- for g in cls.rack_groups | default([]) -%}
+      {%- for i in range(g.first, g.last + 1) -%}
+      {%- set _ = out.append({'name': g.prefix ~ '%02d' | format(i), 'site': g.site, 'location': g.location,
+                              'role': g.role | default(none), 'u_height': g.u_height | default(42)}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
   module_defaults:
     group/netbox.netbox.netbox:
       netbox_url: "{{ nb_url }}"
@@ -62,12 +72,26 @@
         state: present
       check_mode: "{{ not (apply | bool) }}"
 
+    - name: Regions
+      netbox.netbox.netbox_region:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}"}
+        state: present
+      loop: "{{ cls.regions | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+
     - name: Sites
       netbox.netbox.netbox_site:
-        data: {name: "{{ item.name }}", slug: "{{ item.slug }}", status: active}
+        data:
+          name: "{{ item.name }}"
+          slug: "{{ item.slug }}"
+          status: active
+          region: "{{ item.region | default(omit) }}"
+          description: "{{ item.description | default(omit) }}"
         state: present
       loop: "{{ cls.sites | default([]) }}"
       check_mode: "{{ not (apply | bool) }}"
+      # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
+      ignore_errors: "{{ not (apply | bool) }}"
 
     - name: Locations
       netbox.netbox.netbox_location:
@@ -78,16 +102,26 @@
       # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
       ignore_errors: "{{ not (apply | bool) }}"
 
+    - name: Rack roles
+      netbox.netbox.netbox_rack_role:
+        data: {name: "{{ item.name }}", slug: "{{ item.slug }}", color: "{{ item.color | default('9e9e9e') }}"}
+        state: present
+      loop: "{{ cls.rack_roles | default([]) }}"
+      check_mode: "{{ not (apply | bool) }}"
+
     - name: Racks
       netbox.netbox.netbox_rack:
         data:
           name: "{{ item.name }}"
           site: "{{ item.site }}"
           location: "{{ item.location | default(omit) }}"
+          rack_role: "{{ item.role | default(omit, true) }}"
           u_height: "{{ item.u_height | default(42) }}"
           status: active
         state: present
-      loop: "{{ cls.racks | default([]) }}"
+      loop: "{{ racks }}"
+      loop_control:
+        label: "{{ item.site }}/{{ item.name }}"
       check_mode: "{{ not (apply | bool) }}"
       # in check mode parents (site/location/cluster type) do not exist yet, so lookups fail: preview only
       ignore_errors: "{{ not (apply | bool) }}"

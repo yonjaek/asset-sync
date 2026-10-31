@@ -11,59 +11,91 @@ defaults:
   cluster: null       # cluster name for VMs
 
 # Classification objects created by playbooks/netbox_bootstrap.yml (human-approved list)
-# 데모: 가상 회사 "데모클라우드"의 IDC 2곳. 실제 조직/장소와 무관합니다.
+# 데모: 가상 회사 "데모클라우드"의 IDC 3곳 (판교 메인 / 동탄 AI / 용인 DR). 실제 조직·시설과 무관합니다.
 classification:
+  regions:
+    - {name: "수도권", slug: capital-area}
   sites:
-    - {name: "데모 IDC-A", slug: idc-a}
-    - {name: "데모 IDC-B", slug: idc-b}
+    - {name: "판교 IDC", slug: pangyo, region: capital-area, description: "데모클라우드 메인 IDC (서비스·k8s·스토리지)"}
+    - {name: "동탄 AI센터", slug: dongtan, region: capital-area, description: "데모클라우드 GPU 학습/추론 클러스터"}
+    - {name: "용인 DR센터", slug: yongin, region: capital-area, description: "데모클라우드 재해복구·백업 센터"}
   locations:
-    - {name: "서버실", slug: idc-a-sr, site: idc-a}
-  racks:   # Excel "서버 위치" A01-42 -> rack A01 (42U)
-    - {name: A01, site: idc-a, location: idc-a-sr, u_height: 42}
-    - {name: A02, site: idc-a, location: idc-a-sr, u_height: 42}
-    - {name: A03, site: idc-a, location: idc-a-sr, u_height: 42}
-    - {name: A04, site: idc-a, location: idc-a-sr, u_height: 42}
-    - {name: A05, site: idc-a, location: idc-a-sr, u_height: 42}
-    - {name: A06, site: idc-a, location: idc-a-sr, u_height: 42}
+    - {name: "1F 서버홀 A", slug: pg-hall-a, site: pangyo}
+    - {name: "2F 서버홀 B", slug: pg-hall-b, site: pangyo}
+    - {name: "네트워크실", slug: pg-netroom, site: pangyo}
+    - {name: "전기·항온항습실", slug: pg-utility, site: pangyo}
+    - {name: "AI 서버홀", slug: dt-ai-hall, site: dongtan}
+    - {name: "네트워크실", slug: dt-netroom, site: dongtan}
+    - {name: "전기·항온항습실", slug: dt-utility, site: dongtan}
+    - {name: "DR 서버홀", slug: yi-dr-hall, site: yongin}
+    - {name: "네트워크실", slug: yi-netroom, site: yongin}
+    - {name: "전기·항온항습실", slug: yi-utility, site: yongin}
+  rack_roles:
+    - {name: "서버", slug: server, color: "2196f3"}
+    - {name: "GPU 고밀도", slug: gpu-dense, color: "4caf50"}
+    - {name: "네트워크", slug: network, color: "ff9800"}
+  rack_groups:   # expanded to racks <prefix><NN>; Excel "서버 위치" A01-42 -> rack A01 (42U), unique per site
+    - {prefix: A, first: 1, last: 10, site: pangyo, location: pg-hall-a, role: server}
+    - {prefix: B, first: 1, last: 8, site: pangyo, location: pg-hall-b, role: server}
+    - {prefix: N, first: 1, last: 2, site: pangyo, location: pg-netroom, role: network}
+    - {prefix: G, first: 1, last: 8, site: dongtan, location: dt-ai-hall, role: gpu-dense, u_height: 48}
+    - {prefix: N, first: 1, last: 1, site: dongtan, location: dt-netroom, role: network}
+    - {prefix: D, first: 1, last: 5, site: yongin, location: yi-dr-hall, role: server}
+    - {prefix: N, first: 1, last: 1, site: yongin, location: yi-netroom, role: network}
   device_roles:
     - {name: "Server", slug: server, color: "2196f3", vm_role: false}
     - {name: "GPU Server", slug: gpu-server, color: "4caf50", vm_role: false}
-    - {name: "Network", slug: network, color: "ff9800", vm_role: false}
     - {name: "Storage", slug: storage, color: "9c27b0", vm_role: false}
-    - {name: "PDU/UPS", slug: pdu-ups, color: "795548", vm_role: false}
+    - {name: "Router", slug: router, color: "f44336", vm_role: false}
+    - {name: "Firewall", slug: firewall, color: "b71c1c", vm_role: false}
+    - {name: "Load Balancer", slug: load-balancer, color: "e91e63", vm_role: false}
+    - {name: "Spine Switch", slug: spine-switch, color: "ff9800", vm_role: false}
+    - {name: "Leaf Switch", slug: leaf-switch, color: "ffc107", vm_role: false}
+    - {name: "OOB Switch", slug: oob-switch, color: "ffeb3b", vm_role: false}
+    - {name: "PDU", slug: pdu, color: "795548", vm_role: false}
+    - {name: "UPS", slug: ups, color: "5d4037", vm_role: false}
+    - {name: "항온항습기", slug: crac, color: "00bcd4", vm_role: false}
     - {name: "VM", slug: vm, color: "607d8b", vm_role: true}
   cluster_types:
     - {name: "Nutanix AHV", slug: nutanix-ahv}
     - {name: "Proxmox VE", slug: proxmox-ve}
     - {name: "VMware ESXi", slug: vmware-esxi}
   clusters:
-    - {name: demo-nutanix, type: nutanix-ahv, site: idc-a}
-    - {name: demo-proxmox, type: proxmox-ve, site: idc-a}
-    - {name: demo-esxi, type: vmware-esxi, site: idc-a}
+    - {name: pg-nutanix-01, type: nutanix-ahv, site: pangyo}
+    - {name: pg-esxi-01, type: vmware-esxi, site: pangyo}
+    - {name: dt-proxmox-01, type: proxmox-ve, site: dongtan}
+    - {name: yi-esxi-01, type: vmware-esxi, site: yongin}
 
 # Asset spreadsheet input (assetctl.py import-excel). Credential/remark/personal columns are never read.
 excel:
-  sheet: "장비 목록"
-  site: idc-a
-  include_categories: [서버실]   # first column value; 사무실/창고 ... are excluded
+  sheet: "장비 목록"             # single-sheet workbooks (used when `sheets` is empty, or with --sheet/--site)
+  site: null
+  sheets:                        # one workbook, one sheet per IDC (each IDC keeps its own ledger)
+    "판교 IDC":
+      site: pangyo
+      cluster_map: {Nutanix: pg-nutanix-01, ESXi: pg-esxi-01}
+    "동탄 AI센터":
+      site: dongtan
+      cluster_map: {Proxmox: dt-proxmox-01}
+    "용인 DR센터":
+      site: yongin
+      cluster_map: {ESXi: yi-esxi-01}
+  include_categories: [서버실]   # first column value; 네트워크실/사무실/창고 ... are excluded
   include_vms: true
   vm_category: VM
   vm_role: vm
   default_os_family: null        # no OS column in the sheet: set per host in inventory/host_overrides.yml
-  role_rules:                    # first match wins; "-" or no match (switch, PDU, storage) = not imported
+  role_rules:                    # first match wins; "-" or no match (switch, firewall, PDU, storage) = not imported
     - ['Cray\s*(CS|SC)\b|ClusterStor', '-']        # Cray ClusterStor storage enclosures
     - ['DGX|HGX|Apollo\s*6500|XD\d{3}|S74G|GH200|GPU', gpu-server]
     - ['\bD[LX]\d{3}\b|ProLiant|PowerEdge|Synergy|QuantaGrid|Gen\s?\d+|Cray', server]
-  cluster_map:                   # Excel "서버 위치" for VM rows -> NetBox cluster
-    Nutanix: demo-nutanix
-    Proxmox: demo-proxmox
-    ESXi: demo-esxi
+  cluster_map: {}                # single-sheet mode: Excel "서버 위치" for VM rows -> NetBox cluster
 
 # Known subnets (all /24). Collected prefixes always win.
 # 데모는 문서/예제용 예약 대역(RFC 5737)만 사용합니다.
 subnets:
-  - 192.0.2.0/24       # OS
-  - 203.0.113.0/24     # GPU
+  - 192.0.2.0/24       # OS: 판교 / 용인 서비스
+  - 203.0.113.0/24     # OS: 동탄 GPU, VM
   - 198.51.100.0/24    # BMC (mock Redfish)
 
 hosts_parse:

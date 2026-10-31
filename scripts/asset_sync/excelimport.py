@@ -109,19 +109,22 @@ def classify_role(model: str, rules: list[list[str]]) -> str | None:
 def build_hosts_from_excel(path: Path | str, settings: dict, overrides: dict | None = None) -> tuple[dict, list[dict]]:
     """Return (hosts, rows_report). hosts has the same shape as hostsparse.build_hosts output."""
     xc = settings.get("excel", {}) or {}
-    sheet = xc.get("sheet", "장비 목록")
     cats = set(xc.get("include_categories", ["서버실"]))
     vm_cat = xc.get("vm_category", "VM") if xc.get("include_vms", True) else None
     rules = xc.get("role_rules", [])
-    cmap = xc.get("cluster_map", {}) or {}
-    site = xc.get("site")
     ov = (overrides or {}).get("hosts", {}) or {}
     ts = datetime.fromtimestamp(Path(path).stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat()
+    sheets = xc.get("sheets") or {}  # one workbook, one sheet per IDC: {sheet name: {site, cluster_map}}
+    multi = bool(sheets)
+    plan = list(sheets.items()) if multi else [(xc.get("sheet", "장비 목록"), {})]
 
     report, hosts = [], {}
-    for rec in read_sheet(path, sheet):
+    records = [(sheet, sc, rec) for sheet, sc in plan for rec in read_sheet(path, sheet)]
+    for sheet, sc, rec in records:
+        site = (sc or {}).get("site") or xc.get("site")
+        cmap = (sc or {}).get("cluster_map") or xc.get("cluster_map") or {}
         cat = rec["category"]
-        out = {"row": rec["row"], "category": cat, "model": rec.get("model"), "label": rec.get("hostname"),
+        out = {"sheet": sheet, "row": rec["row"], "category": cat, "model": rec.get("model"), "label": rec.get("hostname"),
                "status": "ok", "issues": [], "key": None}
         report.append(out)
         is_vm = vm_cat is not None and cat == vm_cat
@@ -161,7 +164,7 @@ def build_hosts_from_excel(path: Path | str, settings: dict, overrides: dict | N
         h = {"hostname": key, "fqdn": label if trusted and "." in label else None, "aliases": [],
              "ipv4": ips, "ipv6": [], "source_lines": [rec["row"]], "status": "ok", "issues": list(out["issues"]),
              "name_trusted": trusted, "bmc_candidate_of": None,
-             "excel": {"sheet": sheet, "row": rec["row"], "collected_at": ts, "label": rec.get("hostname"),
+             "excel": {"sheet": sheet, "multi_sheet": multi, "row": rec["row"], "collected_at": ts, "label": rec.get("hostname"),
                        "model": clean(rec.get("model")), "serial": clean(rec.get("serial")),
                        "bmc_ip": mgmt[0] if mgmt else None, "os_mac": _mac(rec.get("os_mac")),
                        "mgmt_mac": _mac(rec.get("mgmt_mac")), "rack": rack, "position": pos,
@@ -176,7 +179,7 @@ def build_hosts_from_excel(path: Path | str, settings: dict, overrides: dict | N
         if is_vm and not h["cluster"]:
             h["issues"].append(f"cluster_unmapped:{rec.get('position')}")
         if key in hosts:
-            key2 = f"{key}~row{rec['row']}"
+            key2 = f"{key}~{site}-row{rec['row']}" if multi else f"{key}~row{rec['row']}"
             h["hostname"] = key2
             for x in (hosts[key], h):
                 x["status"] = "review"

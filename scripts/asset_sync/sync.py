@@ -17,7 +17,7 @@ import ipaddress
 import logging
 from typing import Any
 
-from .common import mask, now_iso, slugify
+from .common import excel_ref, mask, now_iso, slugify
 from .nbclient import NetBoxError, Writer
 
 log = logging.getLogger("asset_sync.sync")
@@ -101,11 +101,11 @@ class Syncer:
         f = a["fields"].get(name)
         return f["value"] if f and f["confidence"] == "high" else None
 
-    def _journal(self, obj_type: str, obj: dict, asset: dict, fields: list[str]) -> None:
+    def _journal(self, obj_type: str, obj: dict, asset: dict, fields: list[str], extra: list[str] | None = None) -> None:
         if not self.sync_cfg.get("journal", True) or not fields:
             return
         srcs = sorted({f"{k}<-{asset['fields'][k]['source']}@{asset['fields'][k]['collected_at']}"
-                       for k in fields if k in asset["fields"]})
+                       for k in fields if k in asset["fields"]} | set(extra or []))
         self.w.create("extras/journal-entries", {
             "assigned_object_type": obj_type, "assigned_object_id": obj.get("id"), "kind": "info",
             "comments": f"asset-sync {now_iso()}: set {', '.join(sorted(fields))}\n" + "\n".join(srcs)},
@@ -148,7 +148,9 @@ class Syncer:
         return None
 
     # ------------------------------------------------------------ entry point
-    def run(self, assets: list[dict]) -> dict:
+    def run(self, assets: list[dict], context: list[dict] | None = None) -> dict:
+        """context: the full asset list when only a subset is applied, so derived values match the dry-run."""
+        self._collect_heights(context or assets)
         for a in assets:
             before = len(self.w.ops)
             try:
@@ -241,19 +243,18 @@ class Syncer:
                          a["fields"]["serial"], netbox_value=obj["serial"])
             return "serial_mismatch"
 
-        mfr_name = self.aliases.get(mfr_raw.lower(), mfr_raw)
-        for prefix in {mfr_raw, mfr_name}:  # "HPE Cray XD670" under manufacturer HPE -> "Cray XD670"
-            if model.lower().startswith(prefix.lower() + " "):
-                model = model[len(prefix) + 1:].strip()
+        mfr_name, model = self._mfr_model(mfr_raw, model)
         mfr = self._ensure_ref("dcim/manufacturers", mfr_name, {}, name)
         dtype = None
         if mfr:
             dkey = ("dcim/device-types", mfr_name.lower(), model.lower())
             if dkey not in self._cache:  # cache planned objects too, so a dry-run counts each type once
                 found = self._one("dcim/device-types", manufacturer_id=mfr.get("id"), model=model)
-                self._cache[dkey] = found[0] if found else self.w.create(
-                    "dcim/device-types", {"manufacturer": mfr.get("id"), "model": model,
-                                          "slug": slugify(f"{mfr_name}-{model}")}, name, f"{mfr_name} {model}")
+                data = {"manufacturer": mfr.get("id"), "model": model, "slug": slugify(f"{mfr_name}-{model}")}
+                heights = self._heights.get(dkey[1:], set())
+                if len(heights) == 1:  # U height agreed by every serial-confirmed Excel row of this model
+                    data["u_height"] = next(iter(heights))
+                self._cache[dkey] = found[0] if found else self.w.create("dcim/device-types", data, name, f"{mfr_name} {model}")
             dtype = self._cache[dkey]
         platform = self._platform(a)
         tag = self._tag_ref()
@@ -265,6 +266,8 @@ class Syncer:
                 asset_tag = None
         bmc_ip = self._high(a, "bmc_ip")
         cf_bmc = {"bmc_ip": bmc_ip} if bmc_ip and self.sync_cfg.get("bmc_custom_field", True) else {}
+        place = self._placement(a, obj, rack, dtype, name)
+        place_src = [f"position<-excel:{excel_ref(a['excel'])}(confirmed_by_serial)"] if place else []
 
         if not obj:
             data = {"name": name, "site": site["id"], "role": role["id"], "device_type": dtype and dtype.get("id"),
@@ -283,9 +286,10 @@ class Syncer:
                 data["rack"] = rack["id"]
                 if _id(rack.get("location")):
                     data["location"] = _id(rack["location"])
+            data.update(place)
             obj = self.w.create("dcim/devices", data, name, name)
             self._journal("dcim.device", obj, a, [k for k in ("serial", "asset_tag", "manufacturer", "model", "platform", "bmc_ip")
-                                                  if self._high(a, k)])
+                                                  if self._high(a, k)] + (["position"] if place else []), place_src)
         else:
             patch: dict[str, Any] = {}
             for fld, want, have, src in (
@@ -312,16 +316,95 @@ class Syncer:
                 self._review(name, "device", "bmc_ip", "NetBox bmc_ip differs", a["fields"]["bmc_ip"], cfs.get("bmc_ip"))
             if tag and self.tag not in {t.get("slug") for t in obj.get("tags", [])}:
                 patch["tags"] = [{"slug": t["slug"]} for t in obj.get("tags", [])] + tag
+            if place and patch.get("rack", _id(obj.get("rack"))) == rack["id"]:
+                patch.update(place)
             if patch:
                 obj = self.w.patch("dcim/devices", obj, patch, name, name)
-                self._journal("dcim.device", obj, a, [k for k in patch if k in a["fields"]])
-        pos = (a.get("excel") or {}).get("position")
-        if rack and pos and _empty(obj.get("position")):
-            self._review(a["key"], "device", "position", "rack position from Excel is not applied automatically",
-                         {"value": f"{rack.get('name')} U{pos} ({a['excel'].get('u_height')}U)", "source": f"excel:row{a['excel'].get('row')}",
-                          "confidence": "medium"}, action="set position/face in NetBox after checking the rack")
+                self._journal("dcim.device", obj, a, [k for k in patch if k in a["fields"] or k == "position"],
+                              place_src if "position" in patch else [])
         self._sync_interfaces(a, obj, vm=False)
         return None
+
+    # ------------------------------------------------------------ rack position
+    def _mfr_model(self, mfr_raw: str, model: str) -> tuple[str, str]:
+        mfr_name = self.aliases.get(mfr_raw.lower(), mfr_raw)
+        for prefix in {mfr_raw, mfr_name}:  # "HPE Cray XD670" under manufacturer HPE -> "Cray XD670"
+            if model.lower().startswith(prefix.lower() + " "):
+                model = model[len(prefix) + 1:].strip()
+        return mfr_name, model
+
+    @staticmethod
+    def _excel_confirmed(a: dict) -> bool:
+        """The Excel row is proven to describe this machine: its serial equals the collected (high) serial."""
+        s = a["fields"].get("serial")
+        return bool(a.get("excel") and s and s["confidence"] == "high" and "+excel" in s["source"])
+
+    def _collect_heights(self, assets: list[dict]) -> None:
+        """U height per device type, taken only from serial-confirmed Excel rows (merged-cell height)."""
+        self._heights: dict[tuple, set] = {}
+        for a in assets:
+            mfr_raw, model, uh = self._high(a, "manufacturer"), self._high(a, "model"), (a.get("excel") or {}).get("u_height")
+            if mfr_raw and model and uh and a.get("kind") == "device" and self._excel_confirmed(a):
+                m, mo = self._mfr_model(mfr_raw, model)
+                self._heights.setdefault((m.lower(), mo.lower()), set()).add(int(uh))
+
+    def _occupancy(self, rack: dict) -> list[tuple]:
+        """(low U, high U, name, id) of every positioned device in the rack, plus positions planned in this run."""
+        key = ("occupancy", rack.get("id"))
+        if key not in self._cache:
+            occ = []
+            for d in self._one("dcim/devices", rack_id=rack.get("id")):
+                if _empty(d.get("position")):
+                    continue
+                h = self._dtype_height(_id(d.get("device_type")))
+                occ.append((float(d["position"]), float(d["position"]) + max(h, 1) - 1, d.get("name"), d.get("id")))
+            self._cache[key] = occ
+        return self._cache[key]
+
+    def _dtype_height(self, dtype_id: int | None) -> float:
+        key = ("dtype_height", dtype_id)
+        if key not in self._cache:
+            found = self._one("dcim/device-types", id=dtype_id)
+            self._cache[key] = float(found[0].get("u_height") or 1) if found else 1.0
+        return self._cache[key]
+
+    def _placement(self, a: dict, obj: dict | None, rack: dict | None, dtype: dict | None, name: str) -> dict:
+        """Rack position from Excel, applied only when it is safe; otherwise a review row.
+
+        Applied when: the Excel row's serial equals the collected serial, NetBox has no position yet,
+        the device type height equals the Excel U height, the range fits the rack and no other device occupies it.
+        An existing NetBox position is never moved."""
+        xl = a.get("excel") or {}
+        pos, uh = xl.get("position"), int(xl.get("u_height") or 1)
+        if not (rack and pos):
+            return {}
+        fvd = {"value": f"{rack.get('name')} U{pos} ({uh}U)", "source": f"excel:{excel_ref(xl)}", "confidence": "medium"}
+        have = (obj or {}).get("position")
+        if not _empty(have):
+            if float(have) != float(pos):
+                self._review(name, "device", "position", "NetBox position differs; not moved", fvd, netbox_value=f"U{float(have):g}")
+            return {}
+        if not self._excel_confirmed(a):
+            self._review(name, "device", "position", "Excel row not confirmed by collected serial; position not applied", fvd,
+                         action="set position/face in NetBox after checking the rack")
+            return {}
+        dt_h = float((dtype or {}).get("u_height") or 1)
+        if dt_h != uh:
+            self._review(name, "device", "position", f"device type height {dt_h:g}U differs from Excel {uh}U; position not applied",
+                         fvd, action="fix the device type height or the Excel merged cells")
+            return {}
+        lo, hi = float(pos), float(pos) + uh - 1
+        if lo < 1 or hi > float(rack.get("u_height") or 42):
+            self._review(name, "device", "position", "Excel position is outside the rack", fvd)
+            return {}
+        occ = self._occupancy(rack)
+        clash = sorted({n for s, e, n, i in occ if s <= hi and lo <= e and (obj is None or i != obj.get("id"))})
+        if clash:
+            self._review(name, "device", "position", f"U{lo:g}-{hi:g} already occupied by {', '.join(clash)}; position not applied",
+                         fvd, action="check the rack and fix the Excel row or NetBox")
+            return {}
+        occ.append((lo, hi, name, (obj or {}).get("id")))
+        return {"position": pos, "face": "front"}
 
     def _rack(self, a: dict, site: dict) -> dict | None:
         """Rack from the asset list. Not applied if the list row may describe another machine (serial differs)."""
@@ -330,7 +413,7 @@ class Syncer:
             return None
         if any(d["field"] in ("serial", "kind") for d in a.get("excel_diffs", [])):
             self._review(a["key"], "device", "rack", "Excel row serial/kind differs from the host: row may describe another device; rack not applied",
-                         {"value": rname, "source": f"excel:row{(a.get('excel') or {}).get('row')}", "confidence": "medium"})
+                         {"value": rname, "source": f"excel:{excel_ref(a.get('excel') or {})}", "confidence": "medium"})
             return None
         found = self._one("dcim/racks", site_id=site.get("id"), name=rname)
         if not found:

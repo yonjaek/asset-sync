@@ -95,6 +95,8 @@ def cmd_import_excel(args, settings, log) -> int:
         settings.setdefault("excel", {})["site"] = args.site
     if args.sheet:
         settings.setdefault("excel", {})["sheet"] = args.sheet
+    if args.site or args.sheet:  # explicit single sheet/site: ignore the per-IDC sheet map
+        settings["excel"]["sheets"] = None
     overrides = load_yaml(args.overrides or OVERRIDES, {})
     hosts, rows = excelimport.build_hosts_from_excel(args.file, settings, overrides)
     pilot = _pilot(args.pilot)
@@ -102,7 +104,7 @@ def cmd_import_excel(args, settings, log) -> int:
     if unknown:
         log.warning("pilot hosts not in Excel import: %s", ", ".join(unknown))
     inv = hostsparse.build_inventory(hosts, pilot)
-    fields = ["row", "category", "model", "key", "status", "issues"]
+    fields = ["sheet", "row", "category", "model", "key", "status", "issues"]
     write_csv(REPORTS / "excel_import.csv", rows, fields)
     write_json(DATA / "hosts_normalized.json", {"source": str(args.file), "source_type": "excel", "parsed_at": now_iso(),
                                                 "entries": rows, "hosts": hosts})
@@ -112,16 +114,16 @@ def cmd_import_excel(args, settings, log) -> int:
     excl = Counter(i for r in rows if r["status"] == "excluded" for i in r["issues"])
     roles = Counter(h["role"] for h in hosts.values())
     groups = {g: len(v["hosts"]) for g, v in inv["all"]["children"].items()}
-    md = [f"# Excel import report ({now_iso()})", "", f"source: `{args.file}` sheet `{settings.get('excel', {}).get('sheet')}`", "",
+    md = [f"# Excel import report ({now_iso()})", "", f"source: `{args.file}` sheets `{', '.join(sorted({r['sheet'] for r in rows}))}`", "",
           "## Row status", *[f"- {k}: {v}" for k, v in sorted(st.items())], "",
           "## Excluded", *[f"- {k}: {v}" for k, v in excl.most_common()], "",
           "## Issues (imported rows)", *[f"- {k}: {v}" for k, v in issues.most_common()], "",
           "## Roles", *[f"- {k}: {v}" for k, v in roles.most_common()], "",
           "## Inventory groups", *[f"- {k}: {v}" for k, v in groups.items()], "",
-          "## Rows needing attention", "", "| row | key | status | issues |", "|---|---|---|---|"]
+          "## Rows needing attention", "", "| sheet | row | key | status | issues |", "|---|---|---|---|---|"]
     for r in rows:
         if r["status"] in ("review", "invalid") or any(not i.startswith(("hostname_not_usable",)) for i in r["issues"]) and r["status"] != "excluded":
-            md.append(f"| {r['row']} | {r.get('key') or ''} | {r['status']} | {'; '.join(r['issues'])} |")
+            md.append(f"| {r['sheet']} | {r['row']} | {r.get('key') or ''} | {r['status']} | {'; '.join(r['issues'])} |")
     (REPORTS / "excel_import_report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     print(f"rows={len(rows)} status={dict(st)} hosts={len(hosts)} roles={dict(roles)} groups={groups}")
     print(f"-> {REPORTS/'excel_import.csv'}\n-> {REPORTS/'excel_import_report.md'}\n-> {GEN_INV}")
@@ -314,7 +316,7 @@ def cmd_sync(args, settings, log) -> int:
             print("aborted")
             return 4
     allowed = {r["asset"] for r in changing}
-    res = Syncer(nb, settings, apply=True).run([a for a in assets if a["key"] in allowed])
+    res = Syncer(nb, settings, apply=True).run([a for a in assets if a["key"] in allowed], context=assets)
     _write_run(res, "apply", stamp, assets)
     print(_summary(res, "APPLY result"))
     return 0 if not any(r["status"] == "failed" for r in res["results"]) else 5
