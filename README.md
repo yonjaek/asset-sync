@@ -42,6 +42,47 @@ asset-sync는 **엑셀은 분류(위치·역할) 정보로만 쓰고, 사실 정
 - `inventory/host_overrides.yml`에 `ip-192-0-2-89: {name: pg-ahv-005}`처럼 사람이 이름을 정해 주면 → 다음 실행에서 등록
 - 엑셀의 `ID / PW`, `비고` 열에 넣어 둔 가짜 비밀번호는 **어떤 출력물에도 나오지 않습니다** (해당 열을 처음부터 읽지 않음)
 
+### 화면으로 보기
+
+**랙 배치도 (판교 IDC 서버홀 A)**: 맨 위 Leaf·OOB 스위치(노란색)는 네트워크팀 seed 데이터이고, 그 아래 서버(파란색)는
+asset-sync가 엑셀 U 위치를 시리얼로 확인한 뒤 넣은 것입니다. A07의 U36이 비어 있는 이유는 pg-mon-003의 엑셀 위치(U40)가
+OOB 스위치와 겹쳐 위치만 보류했기 때문입니다.
+
+![랙 배치도](docs/images/rack.png)
+
+**장비 목록**: 3개 센터 349대 (서버 133 + 네트워크·전원·항온항습 216)
+
+![장비 목록](docs/images/devices.png)
+
+**장비 저널**: 어떤 값을 어디서 가져왔는지 남깁니다. 아래는 랙 위치를 `excel:판교 IDC!row185`(시리얼 확인)에서, 시리얼과 모델을 BMC Redfish에서 가져온 기록입니다.
+
+![장비 저널](docs/images/journal.png)
+
+### 다시 실행하면 쓰기 0건
+
+```text
+$ make demo-apply                         $ make demo-rerun
+== APPLY result ==                        == DRY-RUN plan ==
+assets: changed=133                       assets: review=9, skipped=64, unchanged=133
+writes: 281                               writes: 0
+   133 x create dcim/devices              review rows: 45
+   133 x create extras/journal-entries
+    13 x create dcim/device-types         No changes written.
+     2 x create dcim/manufacturers
+```
+
+### 자동으로 넣지 않은 것 (`reports/review_report.csv`, `run_report.csv` 발췌)
+
+| 장비 | 항목 | 사유 (도구 출력 그대로) | 해야 할 일 |
+|---|---|---|---|
+| pg-mon-003 | position | `U40-40 already occupied by pg-oob-a07; position not applied` | 랙을 확인하고 엑셀 또는 NetBox 수정 |
+| pg-db-004 | serial | `Excel differs from collected value (DE******75 from bmc_redfish:System.SerialNumber)` | 엑셀 시리얼 수정 (이름·랙은 적용 안 함) |
+| pg-k8s-w-013 | model | `Excel differs from collected value (ProLiant DL385 Gen11 …); collected value used` | 엑셀 모델명 수정 |
+| ip-192-0-2-89 | hostname | `hostname not confirmed by a collector` (엑셀 칸: `AHV 클러스터 노드 5 (판교)`) | `host_overrides.yml`에서 이름 지정 |
+| pg-ceph-004 / pg-esxi-004 / yi-legacy-001 | 수집 | `bmc_redfish:timeout` / `auth_failed` / `no_pinned_cert` | BMC 응답·계정·도달 여부 확인 |
+
+시리얼은 보고서에서도 `DE******75`처럼 가려서 남깁니다.
+
 ## 아키텍처
 
 ```mermaid
@@ -225,6 +266,7 @@ deploy/systemd/              주기 동기화(기본 dry-run 보고)와 백업 �
 demo/                        데모 데이터 생성기, 가짜 Redfish BMC, NetBox 초기화 스크립트
 tests/                       단위 테스트 44개, 인메모리 Fake NetBox
 docs/운영가이드.md            실제 환경 운영 가이드 (hosts 파싱 규칙, 반영 규칙, 보안)
+docs/images/                 README 스크린샷 (랙 배치도, 장비 목록, 저널)
 ```
 
 ## 한계와 다음 단계
