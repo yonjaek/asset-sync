@@ -250,6 +250,7 @@ deploy/systemd/              주기 동기화(기본 dry-run 보고)와 백업 �
 demo/                        데모 데이터 생성기, 가짜 Redfish BMC, NetBox 초기화 스크립트
 tests/                       단위 테스트 44개, 인메모리 Fake NetBox
 docs/운영가이드.md            실제 환경 운영 가이드 (hosts 파싱 규칙, 반영 규칙, 보안)
+docs/ai-agent-workflow.md    AI 에이전트(Claude Code)에 작업을 맡긴 방식: 규칙, 권한, 검증, 잡아낸 실수
 docs/images/                 README 스크린샷
 ```
 
